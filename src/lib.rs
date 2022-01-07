@@ -1,25 +1,15 @@
 
-use std::{path::{PathBuf, Path}, io::BufRead, collections::VecDeque};
+use std::{path::{PathBuf, Path}, io::BufRead, collections::VecDeque, sync::Arc};
 
-use dbus::{blocking::{Connection}, arg::{RefArg, Variant, PropMap}, Message, Signature};
+use dbus::{blocking::{Connection, Proxy}, arg::{RefArg, Variant, PropMap}, Message, Signature, channel::Token};
 use bitflags::bitflags;
+use thiserror::Error;
 
-mod bus;
-mod object;
+// mod bus;
+// mod object;
 
-pub use bus::*;
-pub use object::*;
-
-
-pub struct InputContext {
-
-}
-
-impl InputContext {
-    pub fn set_capabilities(&self, cap: Capabilites) {
-
-    }
-}
+// pub use bus::*;
+// pub use object::*;
 
 bitflags! {
     pub struct Capabilites: u32 {
@@ -31,8 +21,6 @@ bitflags! {
         const SURROUNDING_TEXT = 1 << 5;
     }
 }
-
-
 
 fn get_machine_id() -> Result<String, String> {
     if let Ok(id) = std::fs::read_to_string("/etc/machine-id") {
@@ -111,32 +99,17 @@ fn get_address() -> Result<String, String> {
     Err(format!("Failed to find {:?} in the address file", prefix))
 }
 
-struct DummyIC {
-    sig: dbus::Signature<'static>,
-}
-impl dbus::arg::Arg for DummyIC {
-    const ARG_TYPE: dbus::arg::ArgType = dbus::arg::ArgType::ObjectPath;
-    fn signature() -> dbus::Signature<'static> {
-        todo!()
-    }
-}
 
 const REQ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
 // ////////////////////////////////////////////////////////////
 // Commit text
 #[derive(Debug)]
-struct CommitTextSignal {
-    text: String,
+pub struct CommitTextSignal {
+    pub text: String,
 }
-// impl dbus::arg::AppendAll for CommitTextSignal {
-//     fn append(&self, i: &mut dbus::arg::IterAppend) {
-//         RefArg::append(&self.text, i);
-//     }
-// }
 impl dbus::arg::ReadAll for CommitTextSignal {
     fn read(i: &mut dbus::arg::Iter) -> Result<Self, dbus::arg::TypeMismatchError> {
-        println!("CommitText, reading data");
         let text_var: Variant<Box<dyn RefArg>> = i.read()?;
         // Structs are represented internally as `VecDeque<Box<RefArg>>`.
         // According to:
@@ -156,23 +129,14 @@ impl dbus::message::SignalArgs for CommitTextSignal {
 // ////////////////////////////////////////////////////////////
 // UpdatePreeditText
 #[derive(Debug)]
-struct UpdatePreeditTextSignal {
-    text: String,
-    cursor_pos: u32,
-    visible: bool,
+pub struct UpdatePreeditTextSignal {
+    pub text: String,
+    pub cursor_pos: u32,
+    pub visible: bool,
 }
-// impl dbus::arg::AppendAll for UpdatePreeditTextSignal {
-//     fn append(&self, i: &mut dbus::arg::IterAppend) {
-//         RefArg::append(&self.text, i);
-//         RefArg::append(&self.cursor_pos, i);
-//         RefArg::append(&self.visible, i);
-//     }
-// }
 impl dbus::arg::ReadAll for UpdatePreeditTextSignal {
     fn read(i: &mut dbus::arg::Iter) -> Result<Self, dbus::arg::TypeMismatchError> {
-        // println!("UpdatePreeditText, reading data");
         let text_var: Variant<Box<dyn RefArg>> = i.read()?;
-        // println!("signature is {}", text_var.0.signature());
         // Structs are represented internally as `VecDeque<Box<RefArg>>`.
         // According to:
         // https://github.com/diwic/dbus-rs/blob/174e8d55b0e17fb6fbd9112e5c1c6119fe8b431b/dbus/examples/argument_guide.md
@@ -193,54 +157,156 @@ impl dbus::message::SignalArgs for UpdatePreeditTextSignal {
 }
 // ////////////////////////////////////////////////////////////
 
-pub fn asdf() {
-    let addr = get_address().unwrap();
+#[derive(Debug, Error)]
+pub enum Error {
+    DBus(#[from] dbus::Error),
+    Unknown {
+        description: String
+    }
+}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Yeah Display is the same as Debug... I'm lazy
+        f.write_fmt(format_args!("{:?}", self))
+    }
+}
 
-    let mut channel = dbus::channel::Channel::open_private(&addr).unwrap();
-    channel.register().unwrap();
-    let conn = dbus::blocking::Connection::from(channel);
-    let ibus = conn.with_proxy("org.freedesktop.IBus", "/org/freedesktop/IBus", REQ_TIMEOUT);
+#[derive(Debug, Clone, Copy)]
+pub enum AfterCallback {
+    /// Returning this from a callback closure causes it to be removed from
+    /// the 'listeners' and the closure won't be called again
+    Remove,
+    /// Returning this from a callback closure allows the closure to be called
+    /// again the next time the signal is emited.
+    Keep,
+}
+impl AfterCallback {
+    fn to_bool(self) -> bool {
+        match self {
+            AfterCallback::Remove => false,
+            AfterCallback::Keep => true,
+        }
+    }
+}
+
+pub struct Bus {
+    conn: Arc<dbus::blocking::Connection>,
+}
+
+impl Bus {
+    pub fn new() -> Result<Self, Error> {
+        let addr = get_address().map_err(|e| Error::Unknown {description: e})?;
+        let mut channel = dbus::channel::Channel::open_private(&addr)?;
+        channel.register()?;
+        Ok(Bus {
+            conn: Arc::new(dbus::blocking::Connection::from(channel))
+        })
+    }
+
+    pub fn create_input_context(&self, name: &str) -> Result<InputContext, Error> {
+        let ibus = self.conn.with_proxy("org.freedesktop.IBus", "/org/freedesktop/IBus", REQ_TIMEOUT);
+        let (obj_path,): (dbus::strings::Path,) = ibus.method_call("org.freedesktop.IBus", "CreateInputContext", (name,))?;
+
+        Ok(InputContext {
+            conn: self.conn.clone(),
+            obj_path
+        })
+    }
+
+    /// Returns:
+    /// - `Ok(true)` if a new message was successfully processed
+    /// - `Ok(false)` if there was no message in the queue
+    /// - `Err(e)` if there was an error
+    pub fn try_process(&self) -> Result<bool, Error> {
+        let processed = self.conn.process(std::time::Duration::from_millis(0))?;
+        Ok(processed)
+    }
+}
+
+pub struct InputContext {
+    conn: Arc<dbus::blocking::Connection>,
+    obj_path: dbus::strings::Path<'static>,
+}
+impl InputContext {
+    pub fn set_capabilities(&self, caps: Capabilites) {
+        self.with_proxy(|p| {
+            let caps = caps.bits();
+            let () = p.method_call("org.freedesktop.IBus.InputContext", "SetCapabilities", (caps,)).unwrap();
+        })
+    }
+
+    pub fn on_commit_text<F>(&self, mut callback: F) -> Result<Token, Error>
+    where
+        F: FnMut(CommitTextSignal, &Connection, &Message) -> AfterCallback + Send + 'static
+    {
+        let token = self.with_proxy(|p| {
+            p.match_signal(move |a: CommitTextSignal, b: &Connection, c: &Message| {
+                (callback)(a, b, c).to_bool()
+            })
+        })?;
+        Ok(token)
+    }
+
+    pub fn on_update_preedit_text<F>(&self, mut callback: F) -> Result<Token, Error>
+    where
+        F: FnMut(UpdatePreeditTextSignal, &Connection, &Message) -> AfterCallback + Send + 'static
+    {
+        let token = self.with_proxy(|p| {
+            p.match_signal(move |a: UpdatePreeditTextSignal, b: &Connection, c: &Message| {
+                (callback)(a, b, c).to_bool()
+            })
+        })?;
+        Ok(token)
+    }
+
+    /// Returns:
+    /// - `Ok(true)` if the call was handled succesfully
+    /// - `Ok(false)` if the call was executed but it wasn't handled (this can for example happen when the capabilities aren't set correctly)
+    /// - `Err(e)` if an error occured
+    pub fn process_key_event(&self, sym: u32, code: u32, modifiers: u32) -> Result<bool, Error> {
+        self.with_proxy(|p| {
+            let key_args = (sym, code, modifiers);
+            let (handled,): (bool,) = p.method_call("org.freedesktop.IBus.InputContext", "ProcessKeyEvent", key_args)?;
+            Ok(handled)
+        })
+    }
+
+    fn with_proxy<R, F: FnOnce(Proxy<&Connection>) -> R>(&self, f: F) -> R {
+        let proxy = self.conn.with_proxy("org.freedesktop.IBus", &self.obj_path, REQ_TIMEOUT);
+        f(proxy)
+    }
+}
+
+pub fn asdf() {
     
     // dbus::Signature::new(s)
     
-    let (obj_path,): (dbus::strings::Path,) = ibus.method_call("org.freedesktop.IBus", "CreateInputContext", ("My Input Context".to_owned(),)).unwrap();
-    println!("obj path {:?}", obj_path);
+    // let (obj_path,): (dbus::strings::Path,) = ibus.method_call("org.freedesktop.IBus", "CreateInputContext", ("My Input Context".to_owned(),)).unwrap();
+    // println!("obj path {:?}", obj_path);
     
-    let ic_proxy = conn.with_proxy("org.freedesktop.IBus", obj_path, REQ_TIMEOUT);
-
     let caps = (Capabilites::PREEDIT_TEXT | Capabilites::FOCUS).bits();
-    let () = ic_proxy.method_call("org.freedesktop.IBus.InputContext", "SetCapabilities", (caps,)).unwrap();
+    
 
-    let _ = ic_proxy.match_signal(|s: CommitTextSignal, _: &Connection, _: &Message| {
-        println!("Received commited text: {}", s.text);
-        true
-    }).unwrap();
-    let _ = ic_proxy.match_signal(|s: UpdatePreeditTextSignal, _: &Connection, _: &Message| {
-        println!("Received preedit update: {}", s.text);
-        true
-    }).unwrap();
+    // let _ = ic_proxy.match_signal(|s: CommitTextSignal, _: &Connection, _: &Message| {
+    //     println!("Received commited text: {}", s.text);
+    //     true
+    // }).unwrap();
+    // let _ = ic_proxy.match_signal(|s: UpdatePreeditTextSignal, _: &Connection, _: &Message| {
+    //     println!("Received preedit update: {}", s.text);
+    //     true
+    // }).unwrap();
 
-    let key_args: (u32, u32, u32) = (109, 50, 0);
-    let (_handled,): (bool,) = ic_proxy.method_call("org.freedesktop.IBus.InputContext", "ProcessKeyEvent", key_args).unwrap();
-    // println!("handled: {}", handled);
-    let key_args: (u32, u32, u32) = (117, 22, 0);
-    let (_handled,): (bool,) = ic_proxy.method_call("org.freedesktop.IBus.InputContext", "ProcessKeyEvent", key_args).unwrap();
-    // println!("handled: {}", handled);
-    let key_args: (u32, u32, u32) = (65293, 28, 0);
-    let (_handled,): (bool,) = ic_proxy.method_call("org.freedesktop.IBus.InputContext", "ProcessKeyEvent", key_args).unwrap();
-    // println!("handled: {}", handled);
+    // let key_args: (u32, u32, u32) = (109, 50, 0);
+    // let (_handled,): (bool,) = ic_proxy.method_call("org.freedesktop.IBus.InputContext", "ProcessKeyEvent", key_args).unwrap();
+    // // println!("handled: {}", handled);
+    // let key_args: (u32, u32, u32) = (117, 22, 0);
+    // let (_handled,): (bool,) = ic_proxy.method_call("org.freedesktop.IBus.InputContext", "ProcessKeyEvent", key_args).unwrap();
+    // // println!("handled: {}", handled);
+    // let key_args: (u32, u32, u32) = (65293, 28, 0);
+    // let (_handled,): (bool,) = ic_proxy.method_call("org.freedesktop.IBus.InputContext", "ProcessKeyEvent", key_args).unwrap();
+    // // println!("handled: {}", handled);
 
-    loop {
-        match conn.process(std::time::Duration::from_millis(0)) {
-            Ok(true) => {
-                println!("processed.");
-            }
-            _ => {
-                break;
-            }
-        }
-    }
-    println!("done.");
+    
 
     // let channel = conn.channel();
     // let watcher = conn.channel().watch();
