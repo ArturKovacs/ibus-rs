@@ -1,10 +1,9 @@
-
-use ibus::{Bus, Capabilites, AfterCallback};
+use ibus::{AfterCallback, Bus, Capabilites};
 
 fn main() {
     // This program sends three fake keypresses to the IME server: M, U, Return
     // When executing this with the Mozc Katakana layout active, it should print the following:
-    // 
+    //
     // preedit: UpdatePreeditTextSignal { text: "", cursor_pos: 0, visible: false }
     // preedit: UpdatePreeditTextSignal { text: "ｍ", cursor_pos: 1, visible: true }
     // preedit: UpdatePreeditTextSignal { text: "ム", cursor_pos: 1, visible: true }
@@ -17,11 +16,13 @@ fn main() {
     ctx.on_update_preedit_text(|s, _, _| {
         println!("preedit: {:?}", s);
         AfterCallback::Keep
-    }).unwrap();
+    })
+    .unwrap();
     ctx.on_commit_text(|s, _, _| {
         println!("commit: {:?}", s);
         AfterCallback::Keep
-    }).unwrap();
+    })
+    .unwrap();
 
     // The `M` key
     ctx.process_key_event(109, 50, 0).unwrap();
