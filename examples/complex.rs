@@ -26,8 +26,11 @@ fn main() {
 
     // The `M` key
     ctx.process_key_event(109, 50, Modifiers::empty()).unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    ctx.set_cursor_location(40, 20, 0, 0).unwrap();
     // The `U` key
     ctx.process_key_event(117, 22, Modifiers::empty()).unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
     // The `Return` key
     ctx.process_key_event(65293, 28, Modifiers::empty())
         .unwrap();

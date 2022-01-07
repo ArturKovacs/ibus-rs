@@ -7,10 +7,10 @@ use dbus::{
     Message,
 };
 
-use crate::{AfterCallback, Capabilites, Error, REQ_TIMEOUT};
+use crate::{AfterCallback, Capabilites, Error, Modifiers, REQ_TIMEOUT};
 
-// ////////////////////////////////////////////////////////////
-// Commit text
+const INTERFACE_NAME: &'static str = "org.freedesktop.IBus.InputContext";
+
 #[derive(Debug)]
 pub struct CommitTextSignal {
     pub text: String,
@@ -29,12 +29,9 @@ impl dbus::arg::ReadAll for CommitTextSignal {
 }
 impl dbus::message::SignalArgs for CommitTextSignal {
     const NAME: &'static str = "CommitText";
-    const INTERFACE: &'static str = "org.freedesktop.IBus.InputContext";
+    const INTERFACE: &'static str = INTERFACE_NAME;
 }
-// ////////////////////////////////////////////////////////////
 
-// ////////////////////////////////////////////////////////////
-// UpdatePreeditText
 #[derive(Debug)]
 pub struct UpdatePreeditTextSignal {
     pub text: String,
@@ -60,9 +57,8 @@ impl dbus::arg::ReadAll for UpdatePreeditTextSignal {
 }
 impl dbus::message::SignalArgs for UpdatePreeditTextSignal {
     const NAME: &'static str = "UpdatePreeditText";
-    const INTERFACE: &'static str = "org.freedesktop.IBus.InputContext";
+    const INTERFACE: &'static str = INTERFACE_NAME;
 }
-// ////////////////////////////////////////////////////////////
 
 pub struct InputContext {
     pub(crate) conn: Arc<dbus::blocking::Connection>,
@@ -73,11 +69,7 @@ impl InputContext {
         self.with_proxy(|p| {
             let caps = caps.bits();
             let () = p
-                .method_call(
-                    "org.freedesktop.IBus.InputContext",
-                    "SetCapabilities",
-                    (caps,),
-                )
+                .method_call(INTERFACE_NAME, "SetCapabilities", (caps,))
                 .unwrap();
         })
     }
@@ -112,15 +104,28 @@ impl InputContext {
     /// - `Ok(true)` if the call was handled succesfully
     /// - `Ok(false)` if the call was executed but it wasn't handled (this can for example happen when the capabilities aren't set correctly)
     /// - `Err(e)` if an error occured
-    pub fn process_key_event(&self, sym: u32, code: u32, modifiers: u32) -> Result<bool, Error> {
+    pub fn process_key_event(
+        &self,
+        sym: u32,
+        code: u32,
+        modifiers: Modifiers,
+    ) -> Result<bool, Error> {
         self.with_proxy(|p| {
-            let key_args = (sym, code, modifiers);
-            let (handled,): (bool,) = p.method_call(
-                "org.freedesktop.IBus.InputContext",
-                "ProcessKeyEvent",
-                key_args,
-            )?;
+            let key_args = (sym, code, modifiers.bits());
+            let (handled,): (bool,) = p.method_call(INTERFACE_NAME, "ProcessKeyEvent", key_args)?;
             Ok(handled)
+        })
+    }
+
+    /// Sets the location of the IME "text selection box"
+    ///
+    /// - `x` and `y` specify the position. They are in physical pixels and relative
+    ///   to the top left corner of the main display (I think)
+    /// - `w` and `h` may be zero
+    pub fn set_cursor_location(&self, x: i32, y: i32, w: i32, h: i32) -> Result<(), Error> {
+        self.with_proxy(|p| {
+            let () = p.method_call(INTERFACE_NAME, "SetCursorLocation", (x, y, w, h))?;
+            Ok(())
         })
     }
 

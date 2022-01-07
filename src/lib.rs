@@ -7,6 +7,9 @@ use std::{
 use bitflags::bitflags;
 use thiserror::Error;
 
+pub use dbus;
+use dbus::channel::Watch;
+
 mod input_context;
 pub use input_context::*;
 
@@ -20,6 +23,39 @@ bitflags! {
         const FOCUS = 1 << 3;
         const PROPERTY = 1 << 4;
         const SURROUNDING_TEXT = 1 << 5;
+    }
+
+    /// The naming follows the IBus C API
+    ///
+    /// Use `Modifiers::all()` instead of `IBUS_MODIFIER_MASK`
+    pub struct Modifiers: u32 {
+        const SHIFT = 1 << 0;
+
+        /// Caps Lock
+        const LOCK = 1 << 1;
+        const CONTROL = 1 << 2;
+        const MOD1 = 1 << 3;
+
+        /// Num Lock
+        const MOD2 = 1 << 4;
+        const MOD3 = 1 << 5;
+        const MOD4 = 1 << 6;
+        const MOD5 = 1 << 7;
+        const BUTTON1 = 1 << 8;
+        const BUTTON2 = 1 << 9;
+        const BUTTON3 = 1 << 10;
+        const BUTTON4 = 1 << 11;
+        const BUTTON5 = 1 << 12;
+
+        const HANDLED = 1 << 24;
+        const FORWARD = 1 << 25;
+        const IGNORED = Self::FORWARD.bits;
+
+        const SUPER = 1 << 26;
+        const HYPER = 1 << 27;
+        const META = 1 << 28;
+
+        const RELEASE = 1 << 30;
     }
 }
 
@@ -82,11 +118,19 @@ impl Bus {
 
     /// Returns:
     /// - `Ok(true)` if a new message was successfully processed
-    /// - `Ok(false)` if there was no message in the queue
+    /// - `Ok(false)` if there was no event to process
     /// - `Err(e)` if there was an error
-    pub fn try_process(&self) -> Result<bool, Error> {
-        let processed = self.conn.process(std::time::Duration::from_millis(0))?;
+    pub fn process(&self, timeout: std::time::Duration) -> Result<bool, Error> {
+        let processed = self.conn.process(timeout)?;
         Ok(processed)
+    }
+
+    /// Get the underlying file descriptor for the event queue.
+    ///
+    /// This can be used to wake up a blocking wait, when there's
+    /// an event (e.g. "CommitText") ready to be processed
+    pub fn watch(&self) -> Watch {
+        self.conn.channel().watch()
     }
 }
 
@@ -175,6 +219,10 @@ fn get_address() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     #[test]
-    fn it_works() {}
+    fn modifier_flags() {
+        const IBUS_MODIFIER_MASK: u32 = 0x5f001fff;
+        assert_eq!(Modifiers::all().bits(), IBUS_MODIFIER_MASK);
+    }
 }
