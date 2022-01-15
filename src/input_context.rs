@@ -173,7 +173,7 @@ impl InputContext {
             )?;
             Ok(())
         })
-    } //
+    }
 
     fn with_proxy<R, F: FnOnce(Proxy<&Connection>) -> R>(&self, f: F) -> R {
         let proxy = self

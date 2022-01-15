@@ -4,9 +4,9 @@
 //! underlining, foreground and background color
 //!
 
-use std::{any::Any, borrow::Cow, collections::VecDeque, os::raw::c_uint};
+use std::{any::Any, borrow::Cow, os::raw::c_uint};
 
-use log::{debug, warn, trace};
+use log::{debug, warn};
 
 use dbus::arg::{Append, Arg, ArgType, Get, PropMap, RefArg, Variant};
 
@@ -73,10 +73,19 @@ pub enum AttributeKind {
 #[derive(Debug, Clone)]
 pub struct Attribute {
     pub kind: AttributeKind,
+
+    /// Zero based index of the first character to which this should be applied.
+    /// Counting in UTF32 characters.
+    /// (Not sure because the official documentation doesn't specify)
     pub start_index: u32,
+
+    /// One plus the zero based index of the last character to which this should be applied.
+    /// In other words this is non-inclusive.
+    /// Counting in UTF32 characters.
+    /// (Not sure because the official documentation doesn't specify)
     pub end_index: u32,
 }
-
+type SerializedAttribute<'a> = (&'a str, PropMap, u32, u32, u32, u32);
 impl RefArg for Attribute {
     fn arg_type(&self) -> ArgType {
         ArgType::Variant
@@ -149,20 +158,9 @@ impl Append for Attribute {
 }
 impl<'a> Get<'a> for Attribute {
     fn get(i: &mut dbus::arg::Iter<'a>) -> Option<Self> {
-        trace!("Called Attribute::get");
-        let variant: Variant<Box<dyn RefArg>> = i.get()?;
-        trace!("got variant");
-
-        // Structs are represented internally as `VecDeque<Box<RefArg>>`.
-        // According to:
-        // https://github.com/diwic/dbus-rs/blob/174e8d55b0e17fb6fbd9112e5c1c6119fe8b431b/dbus/examples/argument_guide.md
-        let attrib_struct: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&variant.0)?;
-        trace!("got attrib struct");
-        if attrib_struct.len() < 6 {
-            debug!("Attribute had fewer fields than expected.");
-            return None;
-        }
-        let struct_name = attrib_struct[0].as_str()?;
+        let mut attrib_var: Variant<dbus::arg::Iter<'a>> = i.get()?;
+        let attrib_struct: SerializedAttribute<'a> = attrib_var.0.get()?;
+        let struct_name = attrib_struct.0;
         if struct_name != ATTRIBUTE_NAME {
             debug!(
                 "Attribute didn't have the expected name. {}",
@@ -171,14 +169,10 @@ impl<'a> Get<'a> for Attribute {
             return None;
         }
 
-        let type_ = attrib_struct[2].as_u64()? as u32;
-        trace!("type");
-        let value = attrib_struct[3].as_u64()? as u32;
-        trace!("value");
-        let start_index = attrib_struct[4].as_u64()? as u32;
-        trace!("s id");
-        let end_index = attrib_struct[5].as_u64()? as u32;
-        trace!("e id");
+        let type_ = attrib_struct.2;
+        let value = attrib_struct.3;
+        let start_index = attrib_struct.4;
+        let end_index = attrib_struct.5;
 
         let kind = match type_ {
             1 => AttributeKind::Underline(UnderlineKind::from_value(value)?),
@@ -192,7 +186,6 @@ impl<'a> Get<'a> for Attribute {
                 return None;
             }
         };
-
         Some(Attribute {
             kind,
             start_index,
@@ -200,6 +193,8 @@ impl<'a> Get<'a> for Attribute {
         })
     }
 }
+
+type SerializedAttrList<'a> = (&'a str, PropMap, Vec<Attribute>);
 
 fn serialize_attribute_list(
     attributes: &[Attribute],
@@ -211,55 +206,31 @@ fn serialize_attribute_list(
     ))
 }
 
-fn deserialize_attribute_list(arg: &(dyn RefArg + 'static)) -> Option<Vec<Attribute>> {
-    let variant: &Variant<Box<dyn RefArg>> = dbus::arg::cast(arg)?;
-    let list_struct: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&variant.0)?;
-    if list_struct.len() < 3 {
-        debug!("Attribute list had fewer than 3 fields.");
-        return None;
-    }
-    let struct_name = list_struct[0].as_str()?;
+fn deserialize_attribute_list<'a>(
+    variant: &mut Variant<dbus::arg::Iter<'a>>,
+) -> Option<Vec<Attribute>> {
+    let list_struct: SerializedAttrList<'a> = match variant.0.get() {
+        Some(s) => s,
+        None => {
+            debug!("Couldn't deserialize attribute list {:?}", variant.0);
+            return None;
+        }
+    };
+    let struct_name: &str = list_struct.0;
     if struct_name != ATTRIBUTE_LIST_NAME {
         debug!("Attribute list didn't have the correct name.");
         return None;
     }
-    let attr_list: &Vec<Variant<Box<dyn RefArg>>> = match dbus::arg::cast(&list_struct[2]) {
-        Some(v) => v,
-        None => {
-            warn!("Couldn't cast the attribute list to the corrrect type");
-            return None;
-        }
-    };
-
-    let init = Some(Vec::with_capacity(attr_list.len()));
-    let attr_list: Option<Vec<Attribute>> = attr_list.iter().fold(init, |target, curr| {
-        if let Some(mut t) = target {
-            let attr: &Attribute = match dbus::arg::cast(curr) {
-                Some(a) => a,
-                None => {
-                    debug!("Could not cast the attribute to the correct type. Attribute was {:?}", curr);
-                    return None;
-                }
-            };
-            t.push(attr.clone());
-            return Some(t);
-        } else {
-            return target;
-        }
-    });
-
-    // let attr_list = <Vec<Attribute> as Get>::get(list_struct[2])?;
-
-    attr_list
+    Some(list_struct.2)
 }
 
+/// Contains a string and a list of attributes
 #[derive(Debug, Clone)]
 pub struct Text<'a> {
     string: Cow<'a, str>,
     attributes: Vec<Attribute>,
 }
-
-/// Contains a string and a list of attributes
+type SerializedText<'a> = (&'a str, PropMap, &'a str, Variant<dbus::arg::Iter<'a>>);
 impl<'a> Text<'a> {
     // Takes a string and a list of attributes
     pub fn new<S, A>(string: S, attributes: A) -> Self
@@ -367,26 +338,20 @@ impl<'a> Arg for Text<'a> {
 }
 impl<'a> Get<'a> for Text<'static> {
     fn get(i: &mut dbus::arg::Iter<'a>) -> Option<Self> {
-        let text_var: Variant<Box<dyn RefArg>> = i.get()?;
+        let mut text_var: Variant<dbus::arg::Iter<'a>> = i.get()?;
 
-        // println!("Text signature:\n{:?}", text_var.signature());
-        // Structs are represented internally as `VecDeque<Box<RefArg>>`.
-        // According to:
-        // https://github.com/diwic/dbus-rs/blob/174e8d55b0e17fb6fbd9112e5c1c6119fe8b431b/dbus/examples/argument_guide.md
-        let text_struct: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&text_var.0)?;
-        if text_struct.len() < 4 {
-            return None;
-        }
-        let struct_name = text_struct[0].as_str()?;
-        if struct_name != TEXT_NAME {
-            return None;
-        }
-        let attrib_list = deserialize_attribute_list(&text_struct[3])?;
-        let text = text_struct[2].as_str()?;
+        let mut text_struct: SerializedText<'a> = match text_var.0.get() {
+            Some(s) => s,
+            None => {
+                debug!("Could not get the name. It was {:?}", text_var.0);
+                return None;
+            }
+        };
 
+        let attributes = deserialize_attribute_list(&mut text_struct.3)?;
         Some(Text {
-            string: Cow::Owned(text.to_owned()),
-            attributes: attrib_list,
+            string: Cow::Owned(text_struct.2.to_owned()),
+            attributes,
         })
     }
 }
