@@ -11,7 +11,10 @@ pub use dbus;
 use dbus::channel::Watch;
 
 mod input_context;
+mod text;
+
 pub use input_context::*;
+pub use text::*;
 
 pub(crate) const REQ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 

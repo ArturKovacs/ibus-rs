@@ -7,7 +7,7 @@ use dbus::{
     Message,
 };
 
-use crate::{AfterCallback, Capabilites, Error, Modifiers, REQ_TIMEOUT};
+use crate::{AfterCallback, Capabilites, Error, Modifiers, Text, REQ_TIMEOUT};
 
 const INTERFACE_NAME: &'static str = "org.freedesktop.IBus.InputContext";
 
@@ -41,10 +41,14 @@ pub struct UpdatePreeditTextSignal {
 impl dbus::arg::ReadAll for UpdatePreeditTextSignal {
     fn read(i: &mut dbus::arg::Iter) -> Result<Self, dbus::arg::TypeMismatchError> {
         let text_var: Variant<Box<dyn RefArg>> = i.read()?;
+        // println!("Text signature:\n{:?}", text_var.signature());
         // Structs are represented internally as `VecDeque<Box<RefArg>>`.
         // According to:
         // https://github.com/diwic/dbus-rs/blob/174e8d55b0e17fb6fbd9112e5c1c6119fe8b431b/dbus/examples/argument_guide.md
         let text_struct: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&text_var.0).unwrap();
+
+        // println!("Text type:\n{:#?}", text_struct);
+
         let text = text_struct[2].as_str().unwrap_or("").to_owned();
         let cursor_pos = i.read()?;
         let visible = i.read()?;
@@ -125,6 +129,44 @@ impl InputContext {
     pub fn set_cursor_location(&self, x: i32, y: i32, w: i32, h: i32) -> Result<(), Error> {
         self.with_proxy(|p| {
             let () = p.method_call(INTERFACE_NAME, "SetCursorLocation", (x, y, w, h))?;
+            Ok(())
+        })
+    }
+
+    pub fn focus_in(&self) -> Result<(), Error> {
+        self.with_proxy(|p| {
+            let () = p.method_call(INTERFACE_NAME, "FocusIn", ())?;
+            Ok(())
+        })
+    }
+
+    pub fn focus_out(&self) -> Result<(), Error> {
+        self.with_proxy(|p| {
+            let () = p.method_call(INTERFACE_NAME, "FocusOut", ())?;
+            Ok(())
+        })
+    }
+
+    pub fn reset(&self) -> Result<(), Error> {
+        self.with_proxy(|p| {
+            let () = p.method_call(INTERFACE_NAME, "Reset", ())?;
+            Ok(())
+        })
+    }
+
+    pub fn set_surrounding_text<'a>(
+        &self,
+        text: impl Into<Text<'a>>,
+        cursor_pos: u32,
+        anchor_pos: u32,
+    ) -> Result<(), Error> {
+        self.with_proxy(|p| {
+            let text: Text<'a> = text.into();
+            let () = p.method_call(
+                INTERFACE_NAME,
+                "SetSurroundingText",
+                (cursor_pos, anchor_pos),
+            )?;
             Ok(())
         })
     }
