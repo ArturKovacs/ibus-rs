@@ -9,6 +9,8 @@ fn main() {
     // preedit: UpdatePreeditTextSignal { text: "ム", cursor_pos: 1, visible: true }
     // commit: CommitTextSignal { text: "ム" }
 
+    simple_logger::SimpleLogger::new().init().unwrap();
+
     let bus = Bus::new().unwrap();
     let ctx = bus.create_input_context("input ctx lel").unwrap();
     ctx.set_capabilities(Capabilites::PREEDIT_TEXT | Capabilites::FOCUS);

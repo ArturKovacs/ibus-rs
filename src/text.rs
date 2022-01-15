@@ -6,7 +6,7 @@
 
 use std::{any::Any, borrow::Cow, collections::VecDeque, os::raw::c_uint};
 
-use log::{debug, warn};
+use log::{debug, warn, trace};
 
 use dbus::arg::{Append, Arg, ArgType, Get, PropMap, RefArg, Variant};
 
@@ -45,7 +45,7 @@ impl UnderlineKind {
     }
 }
 
-/// A string attribute
+/// A string attribute kind
 #[derive(Debug, Clone, Copy)]
 pub enum AttributeKind {
     Underline(UnderlineKind),
@@ -69,6 +69,7 @@ pub enum AttributeKind {
     Background(u32),
 }
 
+/// A string attribute
 #[derive(Debug, Clone)]
 pub struct Attribute {
     pub kind: AttributeKind,
@@ -148,12 +149,15 @@ impl Append for Attribute {
 }
 impl<'a> Get<'a> for Attribute {
     fn get(i: &mut dbus::arg::Iter<'a>) -> Option<Self> {
+        trace!("Called Attribute::get");
         let variant: Variant<Box<dyn RefArg>> = i.get()?;
+        trace!("got variant");
 
         // Structs are represented internally as `VecDeque<Box<RefArg>>`.
         // According to:
         // https://github.com/diwic/dbus-rs/blob/174e8d55b0e17fb6fbd9112e5c1c6119fe8b431b/dbus/examples/argument_guide.md
         let attrib_struct: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&variant.0)?;
+        trace!("got attrib struct");
         if attrib_struct.len() < 6 {
             debug!("Attribute had fewer fields than expected.");
             return None;
@@ -168,9 +172,13 @@ impl<'a> Get<'a> for Attribute {
         }
 
         let type_ = attrib_struct[2].as_u64()? as u32;
+        trace!("type");
         let value = attrib_struct[3].as_u64()? as u32;
+        trace!("value");
         let start_index = attrib_struct[4].as_u64()? as u32;
+        trace!("s id");
         let end_index = attrib_struct[5].as_u64()? as u32;
+        trace!("e id");
 
         let kind = match type_ {
             1 => AttributeKind::Underline(UnderlineKind::from_value(value)?),
@@ -215,14 +223,34 @@ fn deserialize_attribute_list(arg: &(dyn RefArg + 'static)) -> Option<Vec<Attrib
         debug!("Attribute list didn't have the correct name.");
         return None;
     }
-    let attr_list: &Vec<Attribute> = match dbus::arg::cast(&list_struct[2]) {
+    let attr_list: &Vec<Variant<Box<dyn RefArg>>> = match dbus::arg::cast(&list_struct[2]) {
         Some(v) => v,
         None => {
             warn!("Couldn't cast the attribute list to the corrrect type");
             return None;
         }
     };
-    Some(attr_list.clone())
+
+    let init = Some(Vec::with_capacity(attr_list.len()));
+    let attr_list: Option<Vec<Attribute>> = attr_list.iter().fold(init, |target, curr| {
+        if let Some(mut t) = target {
+            let attr: &Attribute = match dbus::arg::cast(curr) {
+                Some(a) => a,
+                None => {
+                    debug!("Could not cast the attribute to the correct type. Attribute was {:?}", curr);
+                    return None;
+                }
+            };
+            t.push(attr.clone());
+            return Some(t);
+        } else {
+            return target;
+        }
+    });
+
+    // let attr_list = <Vec<Attribute> as Get>::get(list_struct[2])?;
+
+    attr_list
 }
 
 #[derive(Debug, Clone)]
@@ -231,6 +259,7 @@ pub struct Text<'a> {
     attributes: Vec<Attribute>,
 }
 
+/// Contains a string and a list of attributes
 impl<'a> Text<'a> {
     // Takes a string and a list of attributes
     pub fn new<S, A>(string: S, attributes: A) -> Self
@@ -290,8 +319,7 @@ impl<'a> RefArg for Text<'a> {
     }
 
     fn signature(&self) -> dbus::Signature<'static> {
-        // basically just "v" but terminated with 0
-        dbus::Signature::from("v\u{0}")
+        <Self as Arg>::signature()
     }
 
     fn append(&self, i: &mut dbus::arg::IterAppend) {
@@ -322,6 +350,19 @@ impl<'a> RefArg for Text<'a> {
             string: Cow::Owned(self.string.clone().into_owned()),
             attributes: self.attributes.clone(),
         })
+    }
+}
+impl<'a> Append for Text<'a> {
+    fn append_by_ref(&self, i: &mut dbus::arg::IterAppend) {
+        <Text as RefArg>::append(self, i);
+    }
+}
+impl<'a> Arg for Text<'a> {
+    const ARG_TYPE: ArgType = ArgType::Variant;
+
+    fn signature() -> dbus::Signature<'static> {
+        // basically just "v" but terminated with 0
+        dbus::Signature::from("v\u{0}")
     }
 }
 impl<'a> Get<'a> for Text<'static> {

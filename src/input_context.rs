@@ -13,17 +13,20 @@ const INTERFACE_NAME: &'static str = "org.freedesktop.IBus.InputContext";
 
 #[derive(Debug)]
 pub struct CommitTextSignal {
-    pub text: String,
+    pub text: Text<'static>,
 }
 impl dbus::arg::ReadAll for CommitTextSignal {
     fn read(i: &mut dbus::arg::Iter) -> Result<Self, dbus::arg::TypeMismatchError> {
-        let text_var: Variant<Box<dyn RefArg>> = i.read()?;
+        // let text_var: Variant<Box<dyn RefArg>> = i.read()?;
         // Structs are represented internally as `VecDeque<Box<RefArg>>`.
         // According to:
         // https://github.com/diwic/dbus-rs/blob/174e8d55b0e17fb6fbd9112e5c1c6119fe8b431b/dbus/examples/argument_guide.md
-        let arg: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&text_var.0).unwrap();
+        // let arg: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&text_var.0).unwrap();
+
+        let text: Text = i.read()?;
         Ok(CommitTextSignal {
-            text: arg[2].as_str().unwrap_or("").to_owned(),
+            // text: arg[2].as_str().unwrap_or("").to_owned(),
+            text,
         })
     }
 }
@@ -34,22 +37,23 @@ impl dbus::message::SignalArgs for CommitTextSignal {
 
 #[derive(Debug)]
 pub struct UpdatePreeditTextSignal {
-    pub text: String,
+    pub text: Text<'static>,
     pub cursor_pos: u32,
     pub visible: bool,
 }
 impl dbus::arg::ReadAll for UpdatePreeditTextSignal {
     fn read(i: &mut dbus::arg::Iter) -> Result<Self, dbus::arg::TypeMismatchError> {
-        let text_var: Variant<Box<dyn RefArg>> = i.read()?;
+        // let text_var: Variant<Box<dyn RefArg>> = i.read()?;
         // println!("Text signature:\n{:?}", text_var.signature());
         // Structs are represented internally as `VecDeque<Box<RefArg>>`.
         // According to:
         // https://github.com/diwic/dbus-rs/blob/174e8d55b0e17fb6fbd9112e5c1c6119fe8b431b/dbus/examples/argument_guide.md
-        let text_struct: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&text_var.0).unwrap();
+        // let text_struct: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&text_var.0).unwrap();
 
         // println!("Text type:\n{:#?}", text_struct);
 
-        let text = text_struct[2].as_str().unwrap_or("").to_owned();
+        // let text = text_struct[2].as_str().unwrap_or("").to_owned();
+        let text: Text = i.read()?;
         let cursor_pos = i.read()?;
         let visible = i.read()?;
         Ok(UpdatePreeditTextSignal {
@@ -165,11 +169,11 @@ impl InputContext {
             let () = p.method_call(
                 INTERFACE_NAME,
                 "SetSurroundingText",
-                (cursor_pos, anchor_pos),
+                (text, cursor_pos, anchor_pos),
             )?;
             Ok(())
         })
-    }
+    } //
 
     fn with_proxy<R, F: FnOnce(Proxy<&Connection>) -> R>(&self, f: F) -> R {
         let proxy = self
