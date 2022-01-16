@@ -24,6 +24,8 @@ fn main() {
     })
     .unwrap();
 
+    ctx.focus_in().unwrap();
+
     // The `M` key
     ctx.process_key_event(109, 50, Modifiers::empty()).unwrap();
     std::thread::sleep(std::time::Duration::from_secs(2));
@@ -34,6 +36,8 @@ fn main() {
     // The `Return` key
     ctx.process_key_event(65293, 28, Modifiers::empty())
         .unwrap();
+
+    ctx.focus_out().unwrap();
 
     loop {
         match bus.process(std::time::Duration::from_secs(0)) {

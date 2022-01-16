@@ -1,7 +1,6 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::sync::Arc;
 
 use dbus::{
-    arg::{RefArg, Variant},
     blocking::{Connection, Proxy},
     channel::Token,
     Message,
@@ -17,21 +16,36 @@ pub struct CommitTextSignal {
 }
 impl dbus::arg::ReadAll for CommitTextSignal {
     fn read(i: &mut dbus::arg::Iter) -> Result<Self, dbus::arg::TypeMismatchError> {
-        // let text_var: Variant<Box<dyn RefArg>> = i.read()?;
-        // Structs are represented internally as `VecDeque<Box<RefArg>>`.
-        // According to:
-        // https://github.com/diwic/dbus-rs/blob/174e8d55b0e17fb6fbd9112e5c1c6119fe8b431b/dbus/examples/argument_guide.md
-        // let arg: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&text_var.0).unwrap();
-
         let text: Text = i.read()?;
-        Ok(CommitTextSignal {
-            // text: arg[2].as_str().unwrap_or("").to_owned(),
-            text,
-        })
+        Ok(CommitTextSignal { text })
     }
 }
 impl dbus::message::SignalArgs for CommitTextSignal {
     const NAME: &'static str = "CommitText";
+    const INTERFACE: &'static str = INTERFACE_NAME;
+}
+
+#[derive(Debug)]
+pub struct ShowPreeditTextSignal {}
+impl dbus::arg::ReadAll for ShowPreeditTextSignal {
+    fn read(_: &mut dbus::arg::Iter) -> Result<Self, dbus::arg::TypeMismatchError> {
+        Ok(ShowPreeditTextSignal {})
+    }
+}
+impl dbus::message::SignalArgs for ShowPreeditTextSignal {
+    const NAME: &'static str = "ShowPreeditText";
+    const INTERFACE: &'static str = INTERFACE_NAME;
+}
+
+#[derive(Debug)]
+pub struct HidePreeditTextSignal {}
+impl dbus::arg::ReadAll for HidePreeditTextSignal {
+    fn read(_: &mut dbus::arg::Iter) -> Result<Self, dbus::arg::TypeMismatchError> {
+        Ok(HidePreeditTextSignal {})
+    }
+}
+impl dbus::message::SignalArgs for HidePreeditTextSignal {
+    const NAME: &'static str = "HidePreeditText";
     const INTERFACE: &'static str = INTERFACE_NAME;
 }
 
@@ -43,16 +57,6 @@ pub struct UpdatePreeditTextSignal {
 }
 impl dbus::arg::ReadAll for UpdatePreeditTextSignal {
     fn read(i: &mut dbus::arg::Iter) -> Result<Self, dbus::arg::TypeMismatchError> {
-        // let text_var: Variant<Box<dyn RefArg>> = i.read()?;
-        // println!("Text signature:\n{:?}", text_var.signature());
-        // Structs are represented internally as `VecDeque<Box<RefArg>>`.
-        // According to:
-        // https://github.com/diwic/dbus-rs/blob/174e8d55b0e17fb6fbd9112e5c1c6119fe8b431b/dbus/examples/argument_guide.md
-        // let text_struct: &VecDeque<Box<dyn RefArg>> = dbus::arg::cast(&text_var.0).unwrap();
-
-        // println!("Text type:\n{:#?}", text_struct);
-
-        // let text = text_struct[2].as_str().unwrap_or("").to_owned();
         let text: Text = i.read()?;
         let cursor_pos = i.read()?;
         let visible = i.read()?;
@@ -80,6 +84,34 @@ impl InputContext {
                 .method_call(INTERFACE_NAME, "SetCapabilities", (caps,))
                 .unwrap();
         })
+    }
+
+    pub fn on_show_preedit_text<F>(&self, mut callback: F) -> Result<Token, Error>
+    where
+        F: FnMut(&Connection, &Message) -> AfterCallback + Send + 'static,
+    {
+        let token = self.with_proxy(|p| {
+            p.match_signal(
+                move |_a: ShowPreeditTextSignal, b: &Connection, c: &Message| {
+                    (callback)(b, c).to_bool()
+                },
+            )
+        })?;
+        Ok(token)
+    }
+
+    pub fn on_hide_preedit_text<F>(&self, mut callback: F) -> Result<Token, Error>
+    where
+        F: FnMut(&Connection, &Message) -> AfterCallback + Send + 'static,
+    {
+        let token = self.with_proxy(|p| {
+            p.match_signal(
+                move |_a: HidePreeditTextSignal, b: &Connection, c: &Message| {
+                    (callback)(b, c).to_bool()
+                },
+            )
+        })?;
+        Ok(token)
     }
 
     pub fn on_commit_text<F>(&self, mut callback: F) -> Result<Token, Error>

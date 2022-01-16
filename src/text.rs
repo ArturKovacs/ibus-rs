@@ -232,7 +232,7 @@ pub struct Text<'a> {
 }
 type SerializedText<'a> = (&'a str, PropMap, &'a str, Variant<dbus::arg::Iter<'a>>);
 impl<'a> Text<'a> {
-    // Takes a string and a list of attributes
+    /// Takes a string and a list of attributes
     pub fn new<S, A>(string: S, attributes: A) -> Self
     where
         S: Into<Cow<'a, str>>,
@@ -252,6 +252,12 @@ impl<'a> Text<'a> {
     #[inline]
     pub fn attributes(&self) -> &[Attribute] {
         &self.attributes
+    }
+
+    /// See also: `as_str`
+    #[inline]
+    pub fn into_string(self) -> String {
+        self.string.into_owned()
     }
 }
 impl<'a> From<&'a str> for Text<'a> {

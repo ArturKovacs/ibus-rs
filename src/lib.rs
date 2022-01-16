@@ -8,7 +8,7 @@ use bitflags::bitflags;
 use thiserror::Error;
 
 pub use dbus;
-use dbus::channel::Watch;
+use dbus::{blocking::stdintf::org_freedesktop_dbus::Introspectable, channel::Watch};
 
 mod input_context;
 mod text;
@@ -112,6 +112,11 @@ impl Bus {
                 .with_proxy("org.freedesktop.IBus", "/org/freedesktop/IBus", REQ_TIMEOUT);
         let (obj_path,): (dbus::strings::Path,) =
             ibus.method_call("org.freedesktop.IBus", "CreateInputContext", (name,))?;
+
+        // println!("ibus:\n{}", ibus.introspect().unwrap());
+        // println!("----------------------------------------------");
+        // let ic = self.conn.with_proxy("org.freedesktop.IBus", &obj_path, REQ_TIMEOUT);
+        // println!("ic:\n{}", ic.introspect().unwrap());
 
         Ok(InputContext {
             conn: self.conn.clone(),
