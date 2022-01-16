@@ -1,3 +1,9 @@
+//!
+//! Many parts are documented here, but it's a good idea to see the
+//! [`simple`](https://github.com/ArturKovacs/ibus-rs/blob/main/examples/simple.rs)
+//! example at the repository for a "quick start".
+//! 
+
 use std::{
     io::BufRead,
     path::{Path, PathBuf},
